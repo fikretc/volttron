@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 #
-# Copyright 2019, Battelle Memorial Institute.
+# Copyright 2020, Battelle Memorial Institute.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -137,6 +137,9 @@ class AuthService(Agent):
         if self._is_connected:
             try:
                 _log.debug("Sending auth updates to peers")
+                # Give it few seconds for platform to startup or for the
+                # router to detect agent install/remove action
+                gevent.sleep(2)
                 self._send_update()
             except BaseException as e:
                 _log.error("Exception sending auth updates to peer. {}".format(e))
@@ -176,6 +179,8 @@ class AuthService(Agent):
                 peers = self.vip.peerlist().get(timeout=0.5)
             except BaseException as e:
                 _log.warning("Attempt {} to get peerlist failed with exception {}".format(i, e))
+                peers = list(self.vip.peerlist.peers_list)
+                _log.warning("Get list of peers from subsystem directly".format(peers))
                 exception = e
 
         if not peers:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 #
-# Copyright 2019, Battelle Memorial Institute.
+# Copyright 2020, Battelle Memorial Institute.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -123,7 +123,7 @@ class AbsolutePathFileReloader(PatternMatchingEventHandler):
     filetowatch *.json will watch all json files in <volttron_home>
     """
     def __init__(self, filetowatch, callback):
-        super(VolttronHomeFileReloader, self).__init__([filetowatch])
+        super(AbsolutePathFileReloader, self).__init__([filetowatch])
         self._callback = callback
         self._filetowatch = filetowatch
 
@@ -134,7 +134,7 @@ class AbsolutePathFileReloader(PatternMatchingEventHandler):
     def on_any_event(self, event):
         _log.debug("Calling callback on event {}. Calling {}".format(event, self._callback))
         try:
-            self._callback()
+            self._callback(self._filetowatch)
         except BaseException as e:
             _log.error("Exception in callback: {}".format(e))
         _log.debug("After callback on event {}".format(event))

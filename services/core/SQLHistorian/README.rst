@@ -4,9 +4,9 @@
 SQLHistorian
 ============
 
-This is a historian agent that writes data to a SQLite or Mysql database
-based on the connection parameters in the configuration. The sql historian has
-been programmed to allow for inconsistent network connectivity
+This is a historian agent that writes data to a SQLite, Mysql, Postgres, TimeScale,
+or Redshift database based on the connection parameters in the configuration.
+The sql historian has been programmed to allow for inconsistent network connectivity
 (automatic re-connection to tcp based databases). All additions to the
 historian are batched and wrapped within a transaction with commit and
 rollback functions properly implemented. This allows the maximum
@@ -23,12 +23,15 @@ Installation notes
    <http://dev.mysql.com/doc/refman/5.6/en/fractional-seconds.html>`__
    for more details
 
-2. The mysql user must have READ, WRITE, UPDATE, and DELETE privileges.
+2. The mysql user must have SELECT INSERT, and DELETE privileges
+   to the historian database tables.
 
-3. The tables in the sql database be created as part of the execution of
-   the SQLHistorianAgent only if the database user has CREATE privileges.
-   If not, use the mysql-create*.sql script to create the tables and then
-   start agent.
+3. SQLHistorianAgent can create the database tables the first time it runs if the database
+   user has CREATE privileges. But we recommend this only for development/test environments.
+   For all other use cases,
+   use the mysql-create*.sql script to create the tables and then
+   start agent. This way database user used by VOLTTRON historian can work with
+   minimum required privileges
 
 Dependencies
 ------------
@@ -51,8 +54,10 @@ Configuration
 The following is a minimal configuration file for using a MySQL based
 historian. Other options are available and are documented
 http://dev.mysql.com/doc/connector-python/en/connector-python-connectargs.html.
-**Not all parameters have been tested, use at your own risk**.
+**Not all mysql connection parameters have been tested, use at your own risk**.
+The configurations can be provided in JSON format or yml format
 
+JSON format
 ::
 
     {
@@ -71,13 +76,33 @@ http://dev.mysql.com/doc/connector-python/en/connector-python-connectargs.html.
         }
     }
 
+YML format
+::
+
+    connection:
+        type: mysql
+        params:
+            host: localhost
+            port: 3306
+            database: test_historian
+            user: historian
+            passwd: historian
+
 SQLite3
 ~~~~~~~
 
-An Sqlite historian provides a convenient solution for under powered
-systems. The database parameter is a location on the file system. By
-default it is relative to the agents installation directory, however it
-will respect a rooted or relative path to the database.
+An Sqlite Historian provides a convenient solution for under powered
+systems. The database is a parameter to a location on the file system; 'database' should be a non-empty string.
+By default, the location is relative to the agent's installation directory,
+however it will respect a rooted or relative path to the database.
+
+If 'database' does not have a rooted or relative path, the location of the database depends on whether the volttron
+platform is in secure mode.
+In secure mode, the location will be under <install_dir>/<agent name>.agent-data directory because this will be
+the only directory in which the agent will have write-access.
+In regular mode, the location will be under <install_dir>/data for backward compatibility.
+
+The following is a minimal configuration file that uses a relative path to the database.
 
 Configuration
 -------------

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 #
-# Copyright 2019, Battelle Memorial Institute.
+# Copyright 2020, Battelle Memorial Institute.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -66,7 +66,10 @@ data_type_map = dict(
 transform_map = dict(
     scale=helpers.scale,
     scale_int=helpers.scale_int,
+    scale_decimal_int_signed=helpers.scale_decimal_int_signed,
     mod10k=helpers.mod10k,
+    mod10k64=helpers.mod10k64,
+    mod10k48=helpers.mod10k48,
     scale_reg=helpers.scale_reg,
     scale_reg_pow_10=helpers.scale_reg_pow_10
 )

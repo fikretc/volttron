@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 #
-# Copyright 2019, Battelle Memorial Institute.
+# Copyright 2020, Battelle Memorial Institute.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@
 import logging
 import sys
 from pprint import pformat
+import datetime
 
 from volttron.platform.agent import utils
 from volttron.platform.messaging.health import STATUS_GOOD
@@ -66,6 +67,15 @@ class ListenerAgent(Agent):
         self._message = self.config.get('message', DEFAULT_MESSAGE)
         self._heartbeat_period = self.config.get('heartbeat_period',
                                                  DEFAULT_HEARTBEAT_PERIOD)
+
+        runtime_limit = int(self.config.get('runtime_limit', 0))
+        if runtime_limit and runtime_limit > 0:
+            stop_time = datetime.datetime.now() + datetime.timedelta(seconds=runtime_limit)
+            _log.info('Listener agent will stop at {}'.format(stop_time))
+            self.core.schedule(stop_time, self.core.stop)
+        else:
+            _log.info('No valid runtime_limit configured; listener agent will run until manually stopped')
+
         try:
             self._heartbeat_period = int(self._heartbeat_period)
         except:
@@ -97,8 +107,8 @@ class ListenerAgent(Agent):
         query = Query(self.core)
         _log.info('query: %r', query.query('serverkey').get())
 
-    @PubSub.subscribe('pubsub', '')
-    def on_match(self, peer, sender, bus,  topic, headers, message):
+    @PubSub.subscribe('pubsub', '', all_platforms=True)
+    def on_match(self, peer, sender, bus, topic, headers, message):
         """Use match_all to receive all messages and print them out."""
         self._logfn(
             "Peer: {0}, Sender: {1}:, Bus: {2}, Topic: {3}, Headers: {4}, "

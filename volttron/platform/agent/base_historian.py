@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*- {{{
 # vim: set fenc=utf-8 ft=python sw=4 ts=4 sts=4 et:
 #
-# Copyright 2019, Battelle Memorial Institute.
+# Copyright 2020, Battelle Memorial Institute.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -366,6 +366,7 @@ class BaseHistorianAgent(Agent):
                  storage_limit_gb=None,
                  sync_timestamp=False,
                  custom_topics={},
+                 device_data_filter={},
                  all_platforms=False,
                  **kwargs):
 
@@ -433,6 +434,7 @@ class BaseHistorianAgent(Agent):
                                 "storage_limit_gb": storage_limit_gb,
                                 "history_limit_days": history_limit_days,
                                 "custom_topics": custom_topics,
+                                "device_data_filter": device_data_filter,
                                 "all_platforms": self._all_platforms
                                }
 
@@ -581,7 +583,7 @@ class BaseHistorianAgent(Agent):
                                    custom_topics_list)
 
         self.stop_process_thread()
-
+        self._device_data_filter = config.get("device_data_filter")
         try:
             self.configure(config)
         except Exception as e:
@@ -815,7 +817,7 @@ class BaseHistorianAgent(Agent):
                 if tz:
                     meta['tz'] = tz
                 elif my_tz:
-                    meta['tz'] = my_tz
+                    meta['tz'] = my_tz.zone
 
             self._event_queue.put({'source': 'log',
                                    'topic': topic + '/' + point,
@@ -840,7 +842,39 @@ class BaseHistorianAgent(Agent):
         # we strip it off to get the base device
         parts = topic.split('/')
         device = '/'.join(parts[1:-1])
-        self._capture_data(peer, sender, bus, topic, headers, message, device)
+        # msg = [{data},{meta}] format
+        msg = [{}, {}]
+        try:
+            # If the filter is empty pass all data.
+            if self._device_data_filter:
+                for _filter, point_list in self._device_data_filter.items():
+                    # If filter is not empty only topics that contain the key
+                    # will be kept.
+                    if _filter in device:
+                        for point in point_list:
+                            # devices all publish
+                            if isinstance(message, list):
+                                # Only points in the point list will be added to the message payload
+                                if point in message[0]:
+                                    msg[0][point] = message[0][point]
+                                    msg[1][point] = message[1][point]
+                            else:
+                                # other devices publish (devices/campus/building/device/point)
+                                msg = None
+                                if point in device:
+                                    msg = message
+                                    # if the point in in the parsed topic then exit for loop
+                                    break
+                if (isinstance(msg, list) and not msg[0]) or \
+                        (isinstance(msg, (float, int, str)) and msg is None):
+                    _log.debug("Topic: {} - is not in configured to be stored".format(topic))
+                    return
+            else:
+                msg = message
+        except Exception as e:
+            _log.debug("Error handling device_data_filter. {}".format(e))
+            msg = message
+        self._capture_data(peer, sender, bus, topic, headers, msg, device)
 
     def _capture_analysis_data(self, peer, sender, bus, topic, headers,
                                message):
@@ -1366,6 +1400,8 @@ class BackupDatabase:
         self._backup_storage_report = backup_storage_report
         self._connection = None
         self._setupdb(check_same_thread)
+        self._dupe_ids = []
+        self._unique_ids = []
 
     def backup_new_data(self, new_publish_list):
         """
@@ -1413,7 +1449,7 @@ class BackupDatabase:
                         values(NULL, ?, ?, ?, ?, ?)''',
                         (timestamp, source, topic_id, dumps(value), dumps(headers)))
                     self._record_count += 1
-                except sqlite3.IntegrityError:
+                except sqlite3.IntegrityError as e:
                     # In the case where we are upgrading an existing installed historian the
                     # unique constraint may still exist on the outstanding database.
                     # Ignore this case.
@@ -1484,41 +1520,44 @@ class BackupDatabase:
         If None is found in `successful_publishes` we assume that everything
         was published.
 
-        :param successful_publishes: List of records that was published.
+        :param successful_publishes: Set of records that was published.
         :param submit_size: Number of things requested from previous call to
                             :py:meth:`get_outstanding_to_publish`
 
-        :type successful_publishes: list
+        :type successful_publishes: set
         :type submit_size: int
 
         """
 
-        #_log.debug("Cleaning up successfully published values.")
         c = self._connection.cursor()
-
-        if None in successful_publishes:
-            c.execute('''DELETE FROM outstanding
-                        WHERE ROWID IN
-                        (SELECT ROWID FROM outstanding
-                          ORDER BY ts LIMIT ?)''', (submit_size,))
-            if self._record_count < c.rowcount:
-                self._record_count = 0
+        try:
+            if None in successful_publishes:
+                c.executemany('''DELETE FROM outstanding
+                                          WHERE id = ?''',
+                              ((_id,) for _id in self._unique_ids))
+                if self._record_count < c.rowcount:
+                    self._record_count = 0
+                else:
+                    self._record_count -= len(self._unique_ids)
             else:
-                self._record_count -= c.rowcount
-        else:
-            temp = list(successful_publishes)
-            temp.sort()
-            c.executemany('''DELETE FROM outstanding
-                            WHERE id = ?''',
-                          ((_id,) for _id in
-                           successful_publishes))
-            self._record_count -= len(temp)
+                temp = list(successful_publishes)
+                temp.sort()
+                c.executemany('''DELETE FROM outstanding
+                                WHERE id = ?''',
+                              ((_id,) for _id in
+                               successful_publishes))
+                self._record_count -= len(temp)
+        finally:
+            # if we don't clear these attributes on every publish, we could possibly delete a non-existing record on the next publish
+            self._unique_ids.clear()
+            self._dupe_ids.clear()
 
         self._connection.commit()
 
     def get_outstanding_to_publish(self, size_limit):
         """
-        Retrieve up to `size_limit` records from the cache.
+        Retrieve up to `size_limit` records from the cache. Guarantees a unique list of records,
+        where unique is defined as (topic, timestamp).
 
         :param size_limit: Max number of records to retrieve.
         :type size_limit: int
@@ -1527,9 +1566,9 @@ class BackupDatabase:
         """
         # _log.debug("Getting oldest outstanding to publish.")
         c = self._connection.cursor()
-        c.execute('select * from outstanding order by ts limit ?',
-                  (size_limit,))
+        c.execute('select * from outstanding order by ts limit ?', (size_limit,))
         results = []
+        unique_records = set()
         for row in c:
             _id = row[0]
             timestamp = row[1]
@@ -1538,29 +1577,42 @@ class BackupDatabase:
             value = loads(row[4])
             headers = {} if row[5] is None else loads(row[5])
             meta = self._meta_data[(source, topic_id)].copy()
+            topic = self._backup_cache[topic_id]
+
+            # check for duplicates before appending row to results
+            if (topic_id, timestamp) in unique_records:
+                _log.debug(f"Found duplicate from cache: {row}")
+                self._dupe_ids.append(_id)
+                continue
+            unique_records.add((topic_id, timestamp))
+            self._unique_ids.append(_id)
+
             results.append({'_id': _id,
                             'timestamp': timestamp.replace(tzinfo=pytz.UTC),
                             'source': source,
-                            'topic': self._backup_cache[topic_id],
+                            'topic': topic,
                             'value': value,
                             'headers': headers,
                             'meta': meta})
 
         c.close()
-
         # If we were backlogged at startup and our initial estimate was
         # off this will correct it.
         if len(results) < size_limit:
             self._record_count = len(results)
 
+        # if we have duplicates, we must count them as part of the "real" total of _record_count
+        if self._dupe_ids:
+            _log.debug(f"Adding duplicates to the total record count: {self._dupe_ids}")
+            self._record_count += len(self._dupe_ids)
+
         return results
 
     def get_backlog_count(self):
         """
-        Retrieve the current number of records in the cashe.
+        Retrieve the current number of records in the cache.
         """
         return self._record_count
-
 
     def close(self):
         self._connection.close()
@@ -2192,4 +2244,3 @@ def p_reltime(t):
 # Error rule for syntax errors
 def p_error(p):
     raise ValueError("Syntax Error in Query")
-
